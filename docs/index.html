@@ -1,0 +1,570 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Physics Knowledge Graph</title>
+<script src="https://cdn.jsdelivr.net/npm/graphology@0.25.4/dist/graphology.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sigma@2.4.0/build/sigma.min.js"></script>
+<style>
+  :root { --bg:#fff; --fg:#222; --muted:#777; --panel:#f6f6f4; --line:#ddd; --dim:#ececec; --link:#2a6fd6; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#141414; --fg:#eee; --muted:#999; --panel:#1e1e1e; --line:#333; --dim:#262626; --link:#6aa5ff; } }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.4 system-ui,sans-serif; }
+  #wrap { display:flex; height:100%; }
+  #graph { flex:1; position:relative; min-width:0; }
+  #side { width:400px; max-width:46vw; overflow:auto; background:var(--panel); border-left:1px solid var(--line); padding:10px 14px; box-sizing:border-box; }
+  #bar { position:absolute; top:10px; left:10px; z-index:3; display:flex; gap:6px; }
+  input[type=text], button, select { padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); font:inherit; }
+  #q { width:220px; } button { cursor:pointer; }
+  #matches { position:absolute; top:42px; left:10px; z-index:3; background:var(--bg); border:1px solid var(--line); border-radius:6px; max-height:300px; overflow:auto; }
+  #matches div { padding:4px 8px; cursor:pointer; }
+  .lnk { cursor:pointer; color:var(--link); }
+  #fitbtn { position:absolute; right:12px; bottom:10px; z-index:3; opacity:.9; }
+  #credit { position:absolute; left:10px; bottom:8px; z-index:3; font-size:14px; color:var(--muted); background:var(--bg); opacity:.85; padding:2px 6px; border-radius:4px; }
+  #credit a { color:inherit; text-decoration:none; } #credit a:hover { text-decoration:underline; }
+  #tip { position:fixed; z-index:5; pointer-events:none; max-width:340px; background:var(--bg); border:1px solid var(--line); border-radius:6px;
+         padding:6px 8px; box-shadow:0 2px 8px rgba(0,0,0,.15); display:none; font-size:12px; }
+  details { border-top:1px solid var(--line); padding:6px 0; } summary { cursor:pointer; font-weight:600; padding:2px 0; }
+  h2 { font-size:16px; margin:4px 0; } .muted { color:var(--muted); font-size:12px; }
+  .fact { margin:6px 0; padding-top:5px; border-top:1px dashed var(--line); }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; } .row span:last-child { text-align:right; }
+  .types label { display:inline-block; margin:2px 10px 2px 0; font-size:12px; white-space:nowrap; }
+  .types i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:3px; vertical-align:-1px; }
+  .ctl { margin:6px 0; } .ctl label { margin-right:10px; }
+  @media (max-width:700px) { #wrap { flex-direction:column; } #side { width:100%; max-width:none; height:45%; border-left:0; border-top:1px solid var(--line); } #q { width:150px; } }
+</style></head>
+<body><div id="wrap">
+  <div id="graph"><div id="bar"><input id="q" type="text" placeholder="Search an entity, e.g. Bohm"><button id="reset">Overview</button></div><div id="matches"></div><button id="fitbtn" title="Zoom back to the starting view (keeps any selection or query highlighted)">⤢ Fit view</button><div id="credit"><a href="https://komplexai.io" target="_blank" rel="noopener">Komplex AI 2026</a> · <a href="https://en.wikipedia.org/" target="_blank" rel="noopener" title="Entity and relation descriptions are derived from Wikipedia text, licensed CC BY-SA 4.0">data derived from Wikipedia (CC BY-SA 4.0)</a></div></div>
+  <div id="side">
+    <div id="info">Loading graph…</div>
+    <details open><summary>Query the graph</summary>
+      <div class="ctl"><input type="text" id="gq" placeholder="e.g. path Galileo -> Bohr" style="width:72%"> <button id="gqgo">Run</button> <button id="gqclear">Clear</button></div>
+      <div class="muted" id="gqex"></div>
+      <div id="gqres"></div>
+    </details>
+    <details open><summary>Display &amp; filters</summary>
+      <div class="ctl">Colour by: <label><input type="radio" name="col" value="type" checked> entity type</label><label><input type="radio" name="col" value="comm"> community</label></div>
+      <div class="ctl"><label><input type="checkbox" id="elab" checked> edge labels when zoomed in / selected</label></div>
+      <div class="ctl"><label><input type="checkbox" id="giant"> giant component only</label></div>
+      <div class="ctl">Node opacity: <input type="range" id="nodea" min="0" max="1" step="0.05" value="1"> <b id="nodeav">1</b></div>
+      <div class="ctl">Edge opacity: <input type="range" id="edgea" min="0" max="1" step="0.05" value="0.45"> <b id="edgeav">0.45</b></div>
+      <div class="ctl">Min degree: <input type="range" id="mindeg" min="1" max="40" value="1"> <b id="mindegv">1</b></div>
+      <div class="ctl">Facts from ≥ <select id="minsrc"><option>1</option><option>2</option><option>3</option></select> source passages</div>
+      <div class="ctl">Relation contains: <input type="text" id="relq" placeholder="e.g. discover" style="width:140px"></div>
+      <div id="typesbox"><div class="ctl">Entity types:<br><button id="tall">check all</button> <button id="tnone">clear all</button></div>
+      <div class="ctl types" id="types"></div></div>
+      <div id="commsbox"><div class="ctl">Communities (named by their top hubs):<br><button id="call">check all</button> <button id="cnone">clear all</button></div>
+      <div class="ctl types" id="comms"></div></div>
+      <div class="ctl muted" id="filtnote"></div>
+      <div class="ctl">Relationship types (25 most common):<br><button id="rall">check all</button> <button id="rnone">clear all</button></div>
+      <div class="ctl types" id="rels"></div>
+      <div class="muted" id="shown"></div>
+    </details>
+    <details open><summary>Graph statistics</summary><div id="stats"></div><div id="ccdf"></div>
+      <div class="muted" style="margin-top:6px">Top hubs: <span id="hubs"></span></div></details>
+    <details open><summary>Plots: network science &amp; knowledge graph</summary><div id="plots" class="muted">loading…</div></details>
+  </div>
+</div>
+<div id="tip"></div>
+<script>
+const PAL = ["#4e79a7","#f28e2b","#e15759","#76b7b2","#59a14f","#edc948","#b07aa1","#ff9da7","#9c755f","#bab0ac","#86bcb6","#d37295"];
+const params = new URLSearchParams(location.search);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const camel = s => s.replace(/([a-z])([A-Z])/g, "$1 $2");
+
+async function load() {
+  for (const f of [params.get("data"), "lightrag_main_fa2.json", "lightrag_main.json"].filter(Boolean)) {
+    const r = await fetch(f); if (r.ok) return r.json();
+  }
+  throw new Error("no graph data file found");
+}
+load().then(D => {
+  const M = D.meta;
+  const typeColor = {}; M.types.forEach(([t], i) => typeColor[t] = PAL[i]);
+  const commColor = {}; (M.communities || []).forEach(([c], i) => commColor[c] = PAL[i]);
+  const g = new graphology.UndirectedGraph();
+  D.nodes.forEach(([name, type, x, y, deg, , src, comm, giant], i) => g.addNode(i, { label: camel(name), x, y, deg, etype: type, comm,
+    giant: giant === undefined ? 1 : giant, nsrc: src ? src.split(" ").length : 0, size: Math.min(1.5 + 1.1 * Math.sqrt(deg), 16) }));
+  D.edges.forEach(([s, t, kw, , src], i) => { if (!g.hasEdge(s, t)) g.addEdgeWithKey("e" + i, s, t,
+    { label: kw, kwl: kw.toLowerCase(), nsrc: src ? src.split(" ").length : 0, size: 0.4 }); });
+
+  function hexRGB(v) { v = v.replace("#", "").trim(); if (v.length === 3) v = [...v].map(c => c + c).join(""); const n = parseInt(v, 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
+  function nodeCol(hex) {   // node slider t: colour fades toward the background and becomes transparent together
+    const t = S.nodeA;
+    if (t >= 1 || !/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+    if (t <= 0) return "rgba(0,0,0,0)";
+    if (!S.bgRGB) S.bgRGB = hexRGB(css("--bg") || "#ffffff");
+    const c = hexRGB(hex), mix = 0.1 + 0.9 * t;
+    return `rgba(${c.map((x, i) => Math.round(S.bgRGB[i] + (x - S.bgRGB[i]) * mix)).join(",")},${(0.15 + 0.85 * t).toFixed(2)})`;
+  }
+  function rgba(hex, al) {              // "#rrggbb" + alpha -> rgba(); other colour strings pass through
+    if (al >= 1 || !/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+    const v = parseInt(hex.slice(1), 16); return `rgba(${v >> 16},${(v >> 8) & 255},${v & 255},${al})`;
+  }
+  // ---- state
+  const S = { nodeA: 1, edgeA: 0.45, edgeCol: "rgba(128,128,128,0.5)", focus: null, nbrs: new Set(), colorBy: "type", hiddenTypes: new Set(), minDeg: 1, giant: false, minSrc: 1, rel: "", elab: true, hoverEdge: null };
+  const nodeVisible = (n, a) => a.deg >= S.minDeg && (!S.giant || a.giant) && !S.hiddenTypes.has(typeColor[a.etype] ? a.etype : "other")
+    && !(S.hiddenComms && S.hiddenComms.size && S.hiddenComms.has(commColor[a.comm] ? String(a.comm) : "other"));
+  const edgeVisible = (a) => a.nsrc >= S.minSrc && (!S.rel || a.kwl.includes(S.rel)) && relOk(a);
+  const baseColor = a => S.colorBy === "type" ? (typeColor[a.etype] || "#999") : (commColor[a.comm] || "#aaa");
+
+  const renderer = new Sigma(g, document.getElementById("graph"), {
+    renderEdgeLabels: true, enableEdgeHoverEvents: false, labelRenderedSizeThreshold: 6, labelDensity: 0.7, labelGridCellSize: 80,
+    edgeLabelSize: 11, labelColor: { color: css("--fg") }, edgeLabelColor: { color: css("--muted") }, zIndex: true,
+    nodeReducer: (n, a) => {
+      const inFocus = S.focus !== null && (n === S.focus || S.nbrs.has(n));   // a selected entity shows all its neighbours, whatever the filters
+      if (!inFocus && !nodeVisible(n, a)) return { ...a, hidden: true };
+      const r = { ...a, color: nodeCol(baseColor(a)) };
+      if (S.focus === null && S.query) return S.query.nodes.has(n) ? { ...r, forceLabel: true, zIndex: 2, highlighted: S.query.ends.has(n) }
+                                                                  : { ...r, color: css("--dim"), label: "", zIndex: 0 };
+      if (S.focus === null) return r;
+      if (n === S.focus || S.nbrs.has(n)) return { ...r, forceLabel: true, zIndex: 2, highlighted: n === S.focus };
+      return { ...r, color: css("--dim"), label: "", zIndex: 0 };
+    },
+    edgeReducer: (e, a) => {
+      const [es, et] = g.extremities(e), incident = S.focus !== null && (es === S.focus || et === S.focus);
+      if (!incident && !edgeVisible(a)) return { ...a, hidden: true };
+      const lab = S.elab ? a.label : "";
+      if (e === S.hoverEdge || e === S.selEdge) return { ...a, color: "#e15759", size: 2.5, forceLabel: true, label: a.label, zIndex: 3, hidden: false };
+      if (S.focus === null && S.query) return S.query.edges.has(e) ? { ...a, color: "#e15759", size: 2, forceLabel: true, label: a.label, zIndex: 2, hidden: false } : { ...a, hidden: true };
+      if (S.focus === null) return { ...a, color: S.edgeCol, label: lab };   // contrast + opacity from the slider (default 0.45)
+      const [s, t] = g.extremities(e);
+      return (s === S.focus || t === S.focus) ? { ...a, color: "#f28e2b", size: 2, forceLabel: S.elab, label: lab, zIndex: 1 } : { ...a, hidden: true };
+    },
+  });
+
+  // ---- community names: the 3 members with the most links inside their own community
+  S.hiddenComms = new Set();
+  const commName = {};
+  if (M.communities) {
+    const inDeg = new Map();
+    g.forEachEdge((e, a, s, t, sa, ta) => { if (sa.comm === ta.comm) { inDeg.set(s, (inDeg.get(s) || 0) + 1); inDeg.set(t, (inDeg.get(t) || 0) + 1); } });
+    const best = {};
+    g.forEachNode((n, a) => { (best[a.comm] = best[a.comm] || []).push([inDeg.get(n) || 0, a.label]); });
+    for (const [c] of M.communities) commName[c] = (best[c] || []).sort((x, y) => y[0] - x[0]).slice(0, 3).map(x => x[1]).join(" · ");
+  }
+  // ---- side panel: selection
+  const info = document.getElementById("info");
+  function overview() {
+    info.innerHTML = `<h2>A Knowledge Graph of Physics</h2><div style="font-size:14px;margin-bottom:2px">Mechanics: classical, quantum, relativistic, fluid, solid &amp; statistical</div><div class="muted">${esc(M.source)}</div>
+      <p class="muted">Scroll to zoom, drag to pan. Hover for details. Click an entity to see its relations (labelled edges) and
+      facts; click a neighbour to walk the graph; click an edge to see that fact. Click empty space to clear.</p>`;
+  }
+  function factHTML(ei, from) {
+    const [s, t, kw, d, src] = D.edges[ei];
+    const a = from === undefined ? s : from, b = a === s ? t : s;
+    return `<div class="fact"><span class="lnk" data-n="${a}">${esc(camel(D.nodes[a][0]))}</span> — <i>${esc(kw)}</i> —
+      <span class="lnk" data-n="${b}">${esc(camel(D.nodes[b][0]))}</span><div>${esc(d)}</div><div class="muted">source passages: ${esc(src)}</div></div>`;
+  }
+  function wire() { info.querySelectorAll(".lnk").forEach(el => el.onclick = () => select(+el.dataset.n)); }
+  function select(n) {
+    S.focus = n; S.nbrs = new Set(g.neighbors(n)); S.hoverEdge = null; S.selEdge = null;
+    const [name, type, , , deg, desc, src, comm] = D.nodes[n];
+    const facts = g.edges(n).map(e => factHTML(+e.slice(1), n)).join("");
+    info.innerHTML = `<h2>${esc(camel(name))}</h2><div class="muted">${esc(type)} · ${deg} relations · community ${comm ?? "–"}${commName[comm] ? " (" + esc(commName[comm]) + ")" : ""} ·
+      ${src ? src.split(" ").length : 0} source passages</div><p>${esc(desc)}</p><div class="muted">passages: ${esc(src)}</div>
+      <p><b>Relations (${deg})</b></p>${facts || '<div class="muted">none pass the current filters</div>'}`;
+    wire();
+    const p = renderer.getNodeDisplayData(n);
+    if (p) renderer.getCamera().animate({ x: p.x, y: p.y, ratio: 0.07 }, { duration: 500 });
+    renderer.refresh();
+  }
+  function selectEdge(e) {
+    S.focus = null; S.nbrs = new Set(); S.selEdge = e;
+    info.innerHTML = `<h2>Fact</h2>${factHTML(+e.slice(1))}`; wire(); renderer.refresh();
+  }
+  function clear() { S.query = null; S.focus = null; S.nbrs = new Set(); S.hoverEdge = null; S.selEdge = null; overview(); renderer.refresh(); }
+  renderer.on("clickNode", ({ node }) => S.focus !== null && String(S.focus) === String(node) ? clear() : select(+node));   // click again to deselect
+  renderer.on("clickEdge", ({ edge }) => selectEdge(edge));
+  renderer.on("clickStage", () => S.hoverEdge ? selectEdge(S.hoverEdge) : clear());
+  document.getElementById("reset").onclick = () => { clear(); fitVisible(true); };
+
+  // ---- tooltips
+  const tip = document.getElementById("tip");
+  document.getElementById("graph").addEventListener("mousemove", ev => { tip.style.left = (ev.clientX + 14) + "px"; tip.style.top = (ev.clientY + 12) + "px"; });
+  renderer.on("enterNode", ({ node }) => {
+    const [name, type, , , deg, desc, src, comm] = D.nodes[+node];
+    tip.innerHTML = `<b>${esc(camel(name))}</b><br><span class="muted">${esc(type)} · ${deg} relations · community ${comm ?? "–"}${commName[comm] ? " (" + esc(commName[comm]) + ")" : ""} ·
+      ${src ? src.split(" ").length : 0} passages</span><br>${esc(desc.slice(0, 220))}`;
+    tip.style.display = "block";
+  });
+  renderer.on("enterEdge", ({ edge }) => {
+    const [s, t, kw, d, src] = D.edges[+edge.slice(1)];
+    tip.innerHTML = `<b>${esc(camel(D.nodes[s][0]))}</b> — <i>${esc(kw)}</i> — <b>${esc(camel(D.nodes[t][0]))}</b><br>${esc(d)}<br>
+      <span class="muted">source: ${esc(src)}</span>`;
+    tip.style.display = "block";
+  });
+  renderer.on("leaveNode", () => tip.style.display = "none");
+  renderer.on("leaveEdge", () => tip.style.display = "none");
+
+  // ---- filters
+  const typesDiv = document.getElementById("types");
+  function legend() {        // show the list for the current colour mode; note any filter still active in the other one
+    const comm = S.colorBy === "comm" && !!M.communities;
+    document.getElementById("typesbox").style.display = comm ? "none" : "";
+    document.getElementById("commsbox").style.display = comm ? "" : "none";
+    const off = comm ? [...S.hiddenTypes] : [...S.hiddenComms].map(c => c === "other" ? "small communities" : (commName[c] || "community " + c));
+    const note = document.getElementById("filtnote");
+    note.innerHTML = off.length ? `${comm ? "Entity-type" : "Community"} filter still on: hiding ${esc(off.slice(0, 4).join(", "))}${off.length > 4 ? ` +${off.length - 4} more` : ""} · <span class="lnk" id="filtreset">show all</span>` : "";
+    const r = document.getElementById("filtreset");
+    if (r) r.onclick = () => { (comm ? S.hiddenTypes : S.hiddenComms).clear(); legend(); update(); };
+    typesDiv.innerHTML = M.types.map(([t, c]) => [t, typeColor[t], `${t} (${c.toLocaleString()})`]).concat([["other", "#999", "other"]])
+      .map(([t, col, txt]) => `<label><input type="checkbox" data-t="${esc(t)}" ${S.hiddenTypes.has(t) ? "" : "checked"}><i style="background:${col}"></i>${esc(txt)}</label>`).join("");
+    typesDiv.querySelectorAll("input").forEach(el => el.onchange = () => { el.checked ? S.hiddenTypes.delete(el.dataset.t) : S.hiddenTypes.add(el.dataset.t); update(); });
+    const cd = document.getElementById("comms");
+    if (!M.communities) return;
+    cd.innerHTML = M.communities.map(([c, s], i) => [String(c), PAL[i], `${commName[c] || "community " + c} (${s.toLocaleString()})`])
+      .concat([["other", "#aaa", "other (small communities)"]])
+      .map(([c, col, txt]) => `<label><input type="checkbox" data-c="${esc(c)}" ${S.hiddenComms.has(c) ? "" : "checked"}><i style="background:${col}"></i>${esc(txt)}</label>`).join("");
+    cd.querySelectorAll("input").forEach(el => el.onchange = () => { el.checked ? S.hiddenComms.delete(el.dataset.c) : S.hiddenComms.add(el.dataset.c); update(); });
+  }
+  function update() {
+    let nv = 0; g.forEachNode((n, a) => { if (nodeVisible(n, a)) nv++; });
+    let ev = 0; g.forEachEdge((e, a, s, t, sa, ta) => { if (edgeVisible(a) && nodeVisible(s, sa) && nodeVisible(t, ta)) ev++; });
+    document.getElementById("shown").textContent = `showing ${nv.toLocaleString()} entities, ${ev.toLocaleString()} relations`;
+    renderer.refresh();
+  }
+  document.querySelectorAll("input[name=col]").forEach(el => el.onchange = () => { S.colorBy = el.value; legend(); renderer.refresh(); });
+  document.getElementById("elab").onchange = ev => { S.elab = ev.target.checked; renderer.refresh(); };
+  document.getElementById("giant").onchange = ev => { S.giant = ev.target.checked; update(); };
+  document.getElementById("mindeg").oninput = ev => { S.minDeg = +ev.target.value; document.getElementById("mindegv").textContent = S.minDeg; update(); };
+  document.getElementById("minsrc").onchange = ev => { S.minSrc = +ev.target.value; update(); };
+  document.getElementById("relq").oninput = ev => { S.rel = ev.target.value.trim().toLowerCase(); update(); };
+
+  // ---- statistics
+  const st = M.stats || {};
+  document.getElementById("stats").innerHTML = Object.entries(st).map(([k, v]) => `<div class="row"><span>${esc(k)}</span><span><b>${esc(v)}</b></span></div>`).join("")
+    || `<div class="muted">${M.nodes_drawn || D.nodes.length} entities drawn; ${M.isolated_left_out} isolated not shown</div>`;
+  if (M.degree_ccdf) {   // log-log degree CCDF, drawn as SVG
+    const W = 360, H = 170, P = 30, pts = M.degree_ccdf;
+    const lx = Math.log10(pts[pts.length - 1][0]), ly = Math.log10(pts[pts.length - 1][1]);
+    const X = k => P + (W - P - 8) * Math.log10(k) / lx, Y = p => 8 + (H - P - 8) * Math.log10(p) / ly;
+    const dots = pts.map(([k, p]) => `<circle cx="${X(k).toFixed(1)}" cy="${Y(p).toFixed(1)}" r="2" fill="${PAL[0]}"/>`).join("");
+    const tick = (v, f) => f ? `<text x="${X(v)}" y="${H - P + 14}" font-size="10" text-anchor="middle" fill="currentColor">${v}</text>`
+                            : `<text x="${P - 4}" y="${Y(v) + 3}" font-size="10" text-anchor="end" fill="currentColor">${v}</text>`;
+    document.getElementById("ccdf").innerHTML = `<div class="muted" style="margin-top:8px">Degree distribution, P(K ≥ k), log–log</div>
+      <svg width="${W}" height="${H}" style="max-width:100%"><line x1="${P}" y1="${H - P}" x2="${W - 8}" y2="${H - P}" stroke="currentColor" stroke-opacity=".3"/>
+      <line x1="${P}" y1="8" x2="${P}" y2="${H - P}" stroke="currentColor" stroke-opacity=".3"/>${dots}
+      ${[1, 10, 100].filter(v => v <= pts[pts.length - 1][0]).map(v => tick(v, true)).join("")}${[1, 0.01, 0.0001].filter(v => v >= pts[pts.length - 1][1]).map(v => tick(v, false)).join("")}
+      <text x="${W - 8}" y="${H - P - 4}" font-size="10" text-anchor="end" fill="currentColor">degree k</text></svg>`;
+  }
+  document.getElementById("hubs").innerHTML = (M.hubs || []).map(i => `<span class="lnk" data-n="${i}">${esc(camel(D.nodes[i][0]))}</span>`).join(", ");
+  document.querySelectorAll("#hubs .lnk").forEach(el => el.onclick = () => select(+el.dataset.n));
+
+  // ---- search
+  const low = D.nodes.map(r => camel(r[0]).toLowerCase());
+  const matches = document.getElementById("matches");
+  document.getElementById("q").oninput = ev => {
+    const q = ev.target.value.trim().toLowerCase();
+    if (q.length < 2) { matches.innerHTML = ""; return; }
+    const hits = [];
+    for (let i = 0; i < low.length && hits.length < 300; i++) if (low[i].includes(q)) hits.push(i);
+    hits.sort((a, b) => D.nodes[b][4] - D.nodes[a][4]);
+    matches.innerHTML = hits.slice(0, 15).map(i => `<div data-n="${i}">${esc(camel(D.nodes[i][0]))} <span class="muted">(${D.nodes[i][4]})</span></div>`).join("");
+    matches.querySelectorAll("div").forEach(el => el.onclick = () => { matches.innerHTML = ""; select(+el.dataset.n); });
+  };
+  if (!M.communities) { const c = document.querySelector("input[name=col][value=comm]"); c.disabled = true; c.parentElement.title = "no community data in this file yet"; c.parentElement.style.opacity = 0.5; }
+  if (D.nodes[0].length < 9) { const c = document.getElementById("giant"); c.disabled = true; c.parentElement.title = "no component data in this file yet"; c.parentElement.style.opacity = 0.5; }
+
+  // ---- plots (separate file, so the layout never has to be recomputed for them)
+  function chart(p) {
+    const W = 360, H = 190, L = 46, B = 34, T = 8, Rr = 10, cw = W - L - Rr, ch = H - T - B;
+    const C = (i) => PAL[i % PAL.length], ax = 'stroke="currentColor" stroke-opacity=".35"';
+    const txt = (x, y, t, a = "middle", sz = 10) => `<text x="${x}" y="${y}" font-size="${sz}" text-anchor="${a}" fill="currentColor">${esc(t)}</text>`;
+    const fmt = v => Math.abs(v) >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + "k" : (+v.toPrecision(3)).toString();
+    let body = "";
+    if (p.kind === "loglog" || p.kind === "line") {
+      const lg = p.kind === "loglog", all = p.series.flatMap(s => s.pts).filter(([x, y]) => !lg || (x > 0 && y > 0));
+      const f = lg ? Math.log10 : (v => v);
+      const xs = all.map(q => f(q[0])), ys = all.map(q => f(q[1]));
+      let [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+      if (!lg) { y0 = Math.min(0, y0); }
+      if (x1 === x0) x1 = x0 + 1; if (y1 === y0) y1 = y0 + 1;
+      const X = v => L + cw * (f(v) - x0) / (x1 - x0), Y = v => T + ch * (1 - (f(v) - y0) / (y1 - y0));
+      const ticks = (a, b) => lg ? Array.from({ length: Math.floor(b) - Math.ceil(a) + 1 }, (_, i) => 10 ** (Math.ceil(a) + i))
+                                 : Array.from({ length: 5 }, (_, i) => a + (b - a) * i / 4);
+      body += ticks(x0, x1).map(v => txt(X(v), H - B + 14, fmt(v))).join("") + ticks(y0, y1).map(v => txt(L - 4, Y(v) + 3, fmt(v), "end")).join("");
+      p.series.forEach((s, i) => {
+        const q = s.pts.filter(([x, y]) => !lg || (x > 0 && y > 0));
+        body += lg ? q.map(([x, y]) => `<circle cx="${X(x).toFixed(1)}" cy="${Y(y).toFixed(1)}" r="2.2" fill="${C(i)}"/>`).join("")
+                   : `<polyline fill="none" stroke="${C(i)}" stroke-width="2" points="${q.map(([x, y]) => X(x).toFixed(1) + "," + Y(y).toFixed(1)).join(" ")}"/>`;
+      });
+      if (p.series.length > 1) body += p.series.map((s, i) => `<rect x="${L + 8}" y="${T + 4 + 13 * i}" width="9" height="9" fill="${C(i)}"/>` + txt(L + 21, T + 12 + 13 * i, s.name, "start")).join("");
+    } else if (p.kind === "bar") {
+      const n = p.bars.length, mx = Math.max(...p.bars.map(b => b[1])), bw = cw / n;
+      body += p.bars.map(([lab, v], i) => `<rect x="${(L + i * bw + 1).toFixed(1)}" y="${(T + ch * (1 - v / mx)).toFixed(1)}" width="${Math.max(bw - 2, 1).toFixed(1)}" height="${(ch * v / mx).toFixed(1)}" fill="${C(0)}"><title>${esc(lab)}: ${v}</title></rect>`
+        + (n <= 16 || i % Math.ceil(n / 12) === 0 ? txt(L + i * bw + bw / 2, H - B + 14, lab) : "")).join("");
+      body += [0, mx / 2, mx].map(v => txt(L - 4, T + ch * (1 - v / mx) + 3, fmt(v), "end")).join("");
+    } else if (p.kind === "hbar") {
+      const n = p.bars.length, mx = Math.max(...p.bars.map(b => b[1])), LL = 150, bh = (H - T - 16) / n, cw2 = W - LL - 40;
+      body += p.bars.map(([lab, v], i) => txt(LL - 4, T + i * bh + bh / 2 + 3, lab.length > 26 ? lab.slice(0, 25) + "…" : lab, "end")
+        + `<rect x="${LL}" y="${(T + i * bh + 1).toFixed(1)}" width="${(cw2 * v / mx).toFixed(1)}" height="${Math.max(bh - 2, 1).toFixed(1)}" fill="${C(0)}"/>`
+        + txt(LL + cw2 * v / mx + 4, T + i * bh + bh / 2 + 3, fmt(v), "start")).join("");
+      return `<div style="margin:12px 0" title="${esc(p.help || "")}"><b>${esc(p.title)} <span class="muted">ⓘ</span></b><svg width="${W}" height="${H}" style="max-width:100%;color:var(--fg)">${body}</svg><div class="muted">${esc(p.note || "")}</div></div>`;
+    }
+    const axes = `<line x1="${L}" y1="${H - B}" x2="${W - Rr}" y2="${H - B}" ${ax}/><line x1="${L}" y1="${T}" x2="${L}" y2="${H - B}" ${ax}/>`;
+    const labels = txt(L + cw / 2, H - 4, p.x || "") + `<text transform="translate(11,${T + ch / 2}) rotate(-90)" font-size="10" text-anchor="middle" fill="currentColor">${esc(p.y || "")}</text>`;
+    return `<div style="margin:12px 0" title="${esc(p.help || "")}"><b>${esc(p.title)} <span class="muted">ⓘ</span></b><svg width="${W}" height="${H}" style="max-width:100%;color:var(--fg)">${axes}${body}${labels}</svg><div class="muted">${esc(p.note || "")}</div></div>`;
+  }
+  fetch("lightrag_main_plots.json").then(r => r.ok ? r.json() : null).then(Pd => {
+    document.getElementById("plots").innerHTML = Pd ? Pd.plots.map(chart).join("") : "no plot data file";
+    document.getElementById("plots").classList.remove("muted");
+  }).catch(e => { document.getElementById("plots").textContent = "plots failed: " + e; });
+  document.getElementById("tall").onclick = () => { S.hiddenTypes.clear(); legend(); update(); };
+  document.getElementById("call").onclick = () => { S.hiddenComms.clear(); legend(); update(); };
+  document.getElementById("cnone").onclick = () => { (M.communities || []).forEach(([c]) => S.hiddenComms.add(String(c))); S.hiddenComms.add("other"); legend(); update(); };
+  document.getElementById("tnone").onclick = () => {
+    M.types.forEach(([t]) => S.hiddenTypes.add(t)); S.hiddenTypes.add("other");
+    legend(); update(); };
+  // ---- relationship-type filter: top 25 labels, spelling variants merged (related_to = relatedto = RelatedTo)
+  const rkey = w => w.toLowerCase().replace(/[^a-z]/g, "");
+  const rcount = new Map(), rname = new Map();
+  g.forEachEdge((e, a) => { for (const w of a.label.split(",")) { const k = rkey(w); if (!k) continue;
+    rcount.set(k, (rcount.get(k) || 0) + 1); if (!rname.has(k)) rname.set(k, w.trim()); } });
+  const topRel = [...rcount.entries()].sort((x, y) => y[1] - x[1]).slice(0, 25);
+  const topSet = new Set(topRel.map(([k]) => k));
+  g.forEachEdge((e, a) => { const ks = [...new Set(a.label.split(",").map(rkey).filter(k => topSet.has(k)))];
+    g.setEdgeAttribute(e, "rg", ks.length ? ks : ["other"]); });
+  S.hiddenRels = new Set();
+  function relOk(a) { return !S.hiddenRels || !S.hiddenRels.size || (a.rg || ["other"]).some(k => !S.hiddenRels.has(k)); }
+  const relsDiv = document.getElementById("rels");
+  function relLegend() {
+    const items = topRel.map(([k, c]) => [k, `${rname.get(k)} (${c.toLocaleString()})`]).concat([["other", "other"]]);
+    relsDiv.innerHTML = items.map(([k, txt]) => `<label><input type="checkbox" data-r="${esc(k)}" ${S.hiddenRels.has(k) ? "" : "checked"}>${esc(txt)}</label>`).join("");
+    relsDiv.querySelectorAll("input").forEach(el => el.onchange = () => { el.checked ? S.hiddenRels.delete(el.dataset.r) : S.hiddenRels.add(el.dataset.r); update(); });
+  }
+  document.getElementById("rall").onclick = () => { S.hiddenRels.clear(); relLegend(); update(); };
+  document.getElementById("rnone").onclick = () => { topRel.forEach(([k]) => S.hiddenRels.add(k)); S.hiddenRels.add("other"); relLegend(); update(); };
+  relLegend();
+  // ---- explanatory tooltips (hover) for a general audience
+  const TIP = {
+    q: "Type part of an entity's name; pick a match to jump to it and see its relations.",
+    reset: "Zoom back out to the whole graph and clear the selection.",
+    elab: "Show the relation name written along each line when you zoom in or select an entity.",
+    giant: "Show only the largest connected group, where entities can reach each other through relations.",
+    mindeg: "Hide entities with fewer than this many relations. Raising it leaves only the well-connected core.",
+    minsrc: "Show only facts found in at least this many text passages: more passages means better corroborated.",
+    relq: "Show only relations whose label contains this text, e.g. 'discover' or 'cause'.",
+    tall: "Show all entity types.", tnone: "Hide all entity types; then tick the ones you want to see.",
+    rall: "Show all relation types.", rnone: "Hide all relation types; then tick the ones you want to see.",
+    types: "Entity categories assigned by the language model. Untick to hide that kind of entity.",
+    comms: "Communities: groups of entities more linked to each other than to the rest, named by their 3 best-connected members. Untick to hide a community.",
+    rels: "The 25 most common relation labels (spelling variants merged). A relation stays visible if any of its labels is ticked.",
+  };
+  for (const [id, t] of Object.entries(TIP)) { const el = document.getElementById(id); if (el) { el.title = t; if (el.parentElement && el.tagName === "INPUT") el.parentElement.title = t; } }
+  document.querySelectorAll("input[name=col]").forEach(el => el.parentElement.title = el.value === "type"
+    ? "Colour each entity by its category (concept, person, method, ...)."
+    : "Colour each entity by its community: a group of entities more linked to each other than to the rest, usually a topic.");
+  const STIP = {
+    "Entities": "Things the language model identified in the text: concepts, people, methods, objects.",
+    "Relations": "Links between two entities, each with a label and a description, extracted from the text.",
+    "Isolated entities (no links)": "Entities the model named but never connected to anything. They can't be reached by following relations.",
+    "Mean degree": "Average number of relations per entity.",
+    "Connected pieces": "Number of separate groups that are not linked to each other (isolated entities count as their own piece).",
+    "Giant component": "The largest group of entities that can all reach each other through relations.",
+    "Degree tail exponent α (k≥3)": "How quickly highly connected entities become rare. Values around 2–3 are typical of 'scale-free' networks with a few big hubs.",
+    "Max degree": "Relations of the most connected entity, compared with what a random network of the same size would give.",
+    "Clustering (giant)": "How often two neighbours of an entity are also linked to each other, compared with a random network.",
+    "Mean shortest path (giant)": "Typical number of relation hops between two entities in the main group, compared with a random network.",
+    "Degree assortativity": "Do hubs link to hubs (positive) or to minor entities (negative)?",
+    "Communities (Louvain)": "Groups of entities more linked to each other than to the rest. Modularity Q above ~0.3 means clear group structure.",
+    "Distinct relation labels": "How many different relation names the model invented, and how many it used only once.",
+    "Facts with ≥2 source passages": "Share of relations found in more than one passage of text: a rough measure of corroboration.",
+    "Entities with a duplicate name": "Share of entities that are really the same thing spelled differently (case, spaces, plurals).",
+    "CamelCase entity names": "Names the model ran together without spaces, e.g. 'WaveFunction'. Inconsistent naming creates duplicates.",
+    "Gold answer is an entity": "For the test questions, how often the correct answer exists in the graph as an entity.",
+  };
+  document.querySelectorAll("#stats .row").forEach(r => { const k = r.firstElementChild.textContent; if (STIP[k]) r.title = STIP[k]; });
+  // ---- easy edge hovering: nearest visible edge within 7 px of the pointer (thin edges are hard to hit exactly)
+  let overNode = false, pending = null;
+  renderer.on("enterNode", () => { overNode = true; });
+  renderer.on("leaveNode", () => { overNode = false; });
+  function edgeShown(e, a) {
+    const [s, t] = g.extremities(e);
+    if (S.focus !== null) return s === S.focus || t === S.focus;     // selected entity: all its edges, unfiltered
+    if (!edgeVisible(a)) return false;
+    if (!nodeVisible(s, g.getNodeAttributes(s)) || !nodeVisible(t, g.getNodeAttributes(t))) return false;
+    return S.focus === null || s === S.focus || t === S.focus;
+  }
+  function pickEdge(mx, my) {
+    let best = null, bd = 49;                       // 7 px squared
+    const P = new Map(), vp = n => { let p = P.get(n); if (!p) { const d = renderer.getNodeDisplayData(n); p = renderer.framedGraphToViewport(d); P.set(n, p); } return p; };
+    g.forEachEdge((e, a, s, t) => {
+      if (!edgeShown(e, a)) return;
+      const A = vp(s), B = vp(t);
+      if ((mx < Math.min(A.x, B.x) - 7) || (mx > Math.max(A.x, B.x) + 7) || (my < Math.min(A.y, B.y) - 7) || (my > Math.max(A.y, B.y) + 7)) return;
+      const dx = B.x - A.x, dy = B.y - A.y, L2 = dx * dx + dy * dy || 1;
+      const u = Math.max(0, Math.min(1, ((mx - A.x) * dx + (my - A.y) * dy) / L2));
+      const ex = A.x + u * dx - mx, ey = A.y + u * dy - my, d2 = ex * ex + ey * ey;
+      if (d2 < bd) { bd = d2; best = e; }
+    });
+    return best;
+  }
+  renderer.getMouseCaptor().on("mousemove", ev => {
+    if (pending) return;
+    pending = requestAnimationFrame(() => {
+      pending = null;
+      const e = overNode ? null : pickEdge(ev.x, ev.y);
+      if (e === S.hoverEdge) return;
+      S.hoverEdge = e;
+      if (e) {
+        const [s, t, kw, d, src] = D.edges[+e.slice(1)];
+        tip.innerHTML = `<b>${esc(camel(D.nodes[s][0]))}</b> — <i>${esc(kw)}</i> — <b>${esc(camel(D.nodes[t][0]))}</b><br>${esc(d)}<br>
+          <span class="muted">source: ${esc(src)} · click to open</span>`;
+        tip.style.display = "block";
+      } else if (!overNode) tip.style.display = "none";
+      renderer.refresh();
+    });
+  });
+  // ---- faster help tooltips: the browser's own title tooltip waits ~1 s; show ours after 0.5 s instead
+  const side = document.getElementById("side");
+  let helpTimer = null, helpEl = null;
+  side.addEventListener("mouseover", ev => {
+    const el = ev.target.closest("[title], [data-tip]");
+    if (!el || el === helpEl) return;
+    if (el.hasAttribute("title")) { el.dataset.tip = el.getAttribute("title"); el.removeAttribute("title"); }
+    if (!el.dataset.tip) return;
+    helpEl = el; clearTimeout(helpTimer);
+    helpTimer = setTimeout(() => { tip.innerHTML = esc(el.dataset.tip); tip.style.display = "block"; }, 500);
+  });
+  side.addEventListener("mousemove", ev => { tip.style.left = Math.min(ev.clientX + 14, innerWidth - 360) + "px"; tip.style.top = (ev.clientY + 12) + "px"; });
+  side.addEventListener("mouseout", ev => {
+    if (helpEl && !helpEl.contains(ev.relatedTarget)) { clearTimeout(helpTimer); helpEl = null; tip.style.display = "none"; }
+  });
+  // ---- structured graph queries
+  //   <entity> [hops]            neighbourhood, e.g.  Bohm   or   Bohm 2
+  //   path <A> -> <B>             shortest chains of facts between two entities (up to 3 alternatives)
+  //   <X> -[<rel>]- <Y>           pattern; X, Y = entity text, ? (anything) or ?:type; rel = label text or *
+  const nrm = s => camel(s).toLowerCase().replace(/[-–—/_]/g, " ").replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
+  const NN = D.nodes.map(r => nrm(r[0]));
+  function resolve(q) {
+    const k = nrm(q); if (!k) return null;
+    let c = []; NN.forEach((v, i) => { if (v === k) c.push(i); });
+    if (!c.length) NN.forEach((v, i) => { if (v.includes(k)) c.push(i); });
+    if (!c.length) return null;
+    c.sort((a, b) => D.nodes[b][4] - D.nodes[a][4]);
+    return { id: c[0], alts: c.length };
+  }
+  const MAXR = 300;
+  function edgeKey(a, b) { return g.edge(a, b); }
+  function bfsPath(s, t, banned) {
+    const prev = new Map([[s, null]]), Q = [s];
+    while (Q.length) { const u = Q.shift(); if (u === t) break;
+      for (const v of g.neighbors(u)) if (!prev.has(v) && !banned.has(v)) { prev.set(v, u); Q.push(v); } }
+    if (!prev.has(t)) return null;
+    const p = []; for (let x = t; x !== null; x = prev.get(x)) p.push(x); return p.reverse();
+  }
+  function runQuery(text) {
+    text = text.trim(); S.focus = null; S.nbrs = new Set(); S.selEdge = null;
+    const out = { nodes: new Set(), edges: new Set(), ends: new Set() }; let html = "";
+    let m;
+    if ((m = text.match(/^path\s+(.+?)\s*(->|→|to)\s*(.+)$/i))) {
+      const A = resolve(m[1]), B = resolve(m[3]);
+      if (!A || !B) return showQ(null, `No entity matches "${esc(!A ? m[1] : m[3])}".`);
+      const a = String(A.id), b = String(B.id), paths = [], seen = new Set();
+      const p0 = bfsPath(a, b, new Set()); if (!p0) return showQ(null, `${esc(camel(D.nodes[A.id][0]))} and ${esc(camel(D.nodes[B.id][0]))} are not connected.`);
+      paths.push(p0); seen.add(p0.join());
+      for (const x of p0.slice(1, -1)) { if (paths.length >= 3) break;      // alternatives: avoid one intermediate entity
+        const p = bfsPath(a, b, new Set([x])); if (p && !seen.has(p.join())) { paths.push(p); seen.add(p.join()); } }
+      out.ends.add(a); out.ends.add(b);
+      html = `<p><b>${paths.length} chain(s)</b> from <span class="lnk" data-n="${a}">${esc(camel(D.nodes[a][0]))}</span> to
+        <span class="lnk" data-n="${b}">${esc(camel(D.nodes[b][0]))}</span>, shortest ${p0.length - 1} hops:</p>`;
+      paths.forEach((p, i) => {
+        html += `<div class="fact"><b>Chain ${i + 1}</b> (${p.length - 1} hops)`;
+        for (let j = 0; j < p.length - 1; j++) { const e = edgeKey(p[j], p[j + 1]); out.edges.add(e); html += factHTML(+e.slice(1), +p[j]); }
+        p.forEach(x => out.nodes.add(x)); html += "</div>";
+      });
+      return showQ(out, html);
+    }
+    if ((m = text.match(/^(.+?)\s*-\[\s*(.*?)\s*\]-\s*(.+)$/))) {
+      const side = s => { s = s.trim();
+        if (s === "?" || s === "*") return { any: true };
+        const t = s.match(/^\?\s*:\s*(.+)$/); if (t) return { type: t[1].trim().toLowerCase() };
+        const r = resolve(s); return r ? { id: String(r.id) } : { bad: s }; };
+      const X = side(m[1]), Y = side(m[3]), rel = m[2] === "*" ? "" : m[2].toLowerCase();
+      if (X.bad || Y.bad) return showQ(null, `No entity matches "${esc(X.bad || Y.bad)}".`);
+      const ok = (n, c) => c.any || (c.type && D.nodes[+n][1] === c.type) || (c.id && c.id === n);
+      const cand = X.id ? g.edges(X.id) : Y.id ? g.edges(Y.id) : g.edges();
+      let n = 0;
+      for (const e of cand) {
+        const a = g.getEdgeAttributes(e); if (rel && !a.kwl.includes(rel)) continue;
+        const [s, t] = g.extremities(e);
+        const fwd = ok(s, X) && ok(t, Y), bwd = ok(t, X) && ok(s, Y);
+        if (!fwd && !bwd) continue;
+        if (++n > MAXR) break;
+        out.edges.add(e); out.nodes.add(s); out.nodes.add(t);
+        const from = fwd ? +s : +t;
+        html += factHTML(+e.slice(1), from);
+      }
+      if (X.id) out.ends.add(X.id); if (Y.id) out.ends.add(Y.id);
+      return showQ(out, `<p><b>${Math.min(n, MAXR)} fact(s)</b> match${n > MAXR ? ` (first ${MAXR} shown)` : ""}:</p>` + html);
+    }
+    m = text.match(/^(.+?)(?:\s+(\d))?$/);
+    const A = resolve(m[1]); if (!A) return showQ(null, `No entity matches "${esc(m[1])}".`);
+    const hops = Math.min(+(m[2] || 1), 3), a = String(A.id);
+    let frontier = [a]; out.nodes.add(a); out.ends.add(a);
+    for (let k = 0; k < hops && out.nodes.size < MAXR; k++) {
+      const next = [];
+      for (const u of frontier) for (const e of g.edges(u)) { const v = g.opposite(u, e);
+        if (out.nodes.size >= MAXR && !out.nodes.has(v)) continue;
+        out.edges.add(e); if (!out.nodes.has(v)) { out.nodes.add(v); next.push(v); } }
+      frontier = next;
+    }
+    html = `<p><b>${esc(camel(D.nodes[a][0]))}</b> within ${hops} hop(s): ${out.nodes.size} entities, ${out.edges.size} relations
+      ${A.alts > 1 ? `<span class="muted">(best of ${A.alts} name matches)</span>` : ""}</p>`
+      + [...out.edges].slice(0, MAXR).map(e => factHTML(+e.slice(1))).join("");
+    return showQ(out, html);
+  }
+  function showQ(out, html) {
+    S.query = out;
+    const res = document.getElementById("gqres");
+    res.innerHTML = html;
+    res.querySelectorAll(".lnk").forEach(el => el.onclick = () => select(+el.dataset.n));
+    if (out && out.nodes.size) {         // zoom to the result
+      const ps = [...out.nodes].map(n => renderer.getNodeDisplayData(n)).filter(Boolean);
+      const xs = ps.map(p => p.x), ys = ps.map(p => p.y);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      renderer.getCamera().animate({ x: cx, y: cy, ratio: Math.min(Math.max(span * 1.3, 0.03), 1) }, { duration: 600 });
+    }
+    renderer.refresh();
+  }
+  const gq = document.getElementById("gq");
+  document.getElementById("gqgo").onclick = () => runQuery(gq.value);
+  gq.onkeydown = ev => { if (ev.key === "Enter") runQuery(gq.value); };
+  document.getElementById("gqclear").onclick = () => { gq.value = ""; showQ(null, ""); };
+  const EX = ["path Galileo -> Bohr", "path Kepler -> Dirac", "Bohm", "Heisenberg 2", "?:person -[discover]- ?", "Einstein -[*]- ?:concept", "? -[causes]- ?:event"];
+  document.getElementById("gqex").innerHTML = "Try: " + EX.map(x => `<span class="lnk" data-q="${esc(x)}">${esc(x)}</span>`).join(" · ");
+  document.querySelectorAll("#gqex .lnk").forEach(el => el.onclick = () => { gq.value = el.dataset.q; runQuery(el.dataset.q); });
+  gq.title = "Three kinds of query. An entity name (optionally a number of hops): its neighbourhood. 'path A -> B': the shortest chains of facts linking two entities. 'X -[relation]- Y': facts matching a pattern, where X or Y can be a name, ? for anything, or ?:type (e.g. ?:person), and relation is text in the label or * for any.";
+  // ---- defaults on load: colour by community, hide "other" entity and relation types, giant component only, fit to screen
+  function fitVisible(animate) {
+    const ps = []; g.forEachNode((n, a) => { if (nodeVisible(n, a)) { const d = renderer.getNodeDisplayData(n); if (d) ps.push(d); } });
+    if (!ps.length) return;
+    const xs = ps.map(p => p.x).sort((a, b) => a - b), ys = ps.map(p => p.y).sort((a, b) => a - b);
+    const q = (v, f) => v[Math.floor(f * (v.length - 1))];          // ignore the 0.5% most outlying nodes
+    const x0 = q(xs, 0.005), x1 = q(xs, 0.995), y0 = q(ys, 0.005), y1 = q(ys, 0.995);
+    const ratio = Math.min(Math.max(x1 - x0, y1 - y0) * 1.1, 1);   // camera ratio 1 = whole graph in view
+    const st = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, ratio: Math.max(ratio, 0.02) };
+    animate ? renderer.getCamera().animate(st, { duration: 500 }) : renderer.getCamera().setState(st);
+  }
+  if (M.communities) { S.colorBy = "comm"; document.querySelector("input[name=col][value=comm]").checked = true; }
+  S.hiddenTypes.add("other"); S.hiddenRels.add("other"); S.hiddenComms.add("other"); relLegend();
+  if (D.nodes[0].length >= 9) { S.giant = true; document.getElementById("giant").checked = true; }
+  function setEdgeCol() {   // slider t: colour runs from the background (t=0) toward the text colour (t=1), and alpha with it
+    const hx = v => { v = v.replace("#", ""); if (v.length === 3) v = [...v].map(c => c + c).join(""); const n = parseInt(v, 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+    const bg = hx(css("--bg") || "#ffffff"), fg = hx(css("--fg") || "#222222"), t = S.edgeA, mix = 0.12 + 0.88 * t;
+    const c = bg.map((b, i) => Math.round(b + (fg[i] - b) * mix));
+    S.edgeCol = `rgba(${c[0]},${c[1]},${c[2]},${Math.min(1, 0.15 + 0.85 * t).toFixed(2)})`;
+    if (t === 0) S.edgeCol = "rgba(0,0,0,0)";
+  }
+  setEdgeCol();
+  for (const [id, key] of [["nodea", "nodeA"], ["edgea", "edgeA"]])
+    document.getElementById(id).oninput = ev => { S[key] = +ev.target.value; document.getElementById(id + "v").textContent = ev.target.value;
+      if (key === "edgeA") setEdgeCol(); renderer.refresh(); };
+  document.getElementById("nodea").title = "Make entities more transparent to see the relations and structure underneath.";
+  document.getElementById("edgea").title = "Make relation lines fainter or stronger. Highlighted relations (hover, selection, queries) stay solid.";
+  overview(); legend(); update();
+  requestAnimationFrame(() => fitVisible(false));
+  document.getElementById("fitbtn").onclick = () => fitVisible(true);
+}).catch(err => { document.getElementById("info").textContent = "Failed to load graph data: " + err; });
+</script>
+</body></html>
