@@ -1,5 +1,7 @@
 # Knowledge Graph Explorer
 
+[![A knowledge graph of physics (mechanics), coloured by community — click to open the live demo](images/kg_viewer.jpg)](https://galenwilkerson.github.io/knowledge-graph-explorer/)
+
 **What a small language model builds when you ask it to turn an encyclopedia into a knowledge graph — and what
 that graph looks like through the lens of network science.**
 
